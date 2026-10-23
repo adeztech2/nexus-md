@@ -8,6 +8,14 @@ import { getGroup } from './lib/db.js'
 import { restore, upload, scheduleUpload, clearCloud } from './lib/session.js'
 import { sleep, num } from './lib/utils.js'
 
+// Hide noisy encryption session dumps from the logs
+const origInfo = console.info
+console.info = (...args) => {
+  const first = String(args[0] || '')
+  if (/^(Closing|Opening|Removing|Migrating) .*session/i.test(first)) return
+  origInfo(...args)
+}
+
 const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = B
 const BOT_NAME = process.env.BOT_NAME || 'NEXUS MD'
 const BOT_NUMBER = String(process.env.BOT_NUMBER || '').replace(/\D/g, '')
