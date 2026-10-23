@@ -1,0 +1,25 @@
+{
+  "name": "nexus-md",
+  "version": "1.0.0",
+  "description": "NEXUS MD WhatsApp bot by Arnold Adez",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "1.1.0",
+    "@supabase/supabase-js": "2.45.4",
+    "@whiskeysockets/baileys": "6.7.21",
+    "adm-zip": "0.5.16",
+    "axios": "1.7.7",
+    "dotenv": "16.4.5",
+    "google-tts-api": "^2.0.2",
+    "pino": "9.3.2",
+    "wa-sticker-formatter": "^4.4.4",
+    "yt-search": "^2.10.4"
+  }
+}
