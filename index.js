@@ -7,6 +7,7 @@ import { loadCommands, handleMessage, getAllCommands, getPrefix, clearMeta } fro
 import { getGroup } from './lib/db.js'
 import { restore, upload, scheduleUpload, clearCloud } from './lib/session.js'
 import { sleep, num } from './lib/utils.js'
+import { nexusConnected } from './lib/nexusStyle.js'
 
 // Hide noisy encryption session dumps from the logs
 const origInfo = console.info
@@ -40,11 +41,17 @@ http.createServer(async (req, res) => {
     // No number: show the pairing page
     if (!url.searchParams.has('number')) {
       try {
-        const html = fs.readFileSync(new URL('./pair.html', import.meta.url))
+        // Look for pair.html in the repo root or in the public folder
+        const paths = ['./pair.html', './public/pair.html']
+        let html = null
+        for (const f of paths) {
+          try { html = fs.readFileSync(new URL(f, import.meta.url)); break } catch {}
+        }
+        if (!html) throw new Error('missing')
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         return res.end(html)
       } catch {
-        return sendJson(res, 500, { error: 'pair.html not found next to index.js' })
+        return sendJson(res, 500, { error: 'pair.html not found. Put it in the repo root or in the public folder.' })
       }
     }
 
@@ -101,7 +108,7 @@ async function start() {
       console.log(`✅ ${BOT_NAME} connected as ${num(sock.user.id)}`)
       upload()
       const me = num(sock.user.id) + '@s.whatsapp.net'
-      sock.sendMessage(me, { text: `*${BOT_NAME}* is online ✅\nType ${getPrefix()}menu to see ${getAllCommands().length} commands.` }).catch(() => {})
+      sock.sendMessage(me, { text: nexusConnected({ number: num(sock.user.id), prefix: getPrefix(), count: getAllCommands().length }) }).catch(() => {})
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
@@ -147,3 +154,4 @@ process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)
 process.on('unhandledRejection', (e) => console.log('Unhandled rejection:', e))
 process.on('uncaughtException', (e) => { console.log('Uncaught exception:', e); process.exit(1) })
+           
