@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import http from 'http'
+import fs from 'fs'
 import pino from 'pino'
 import { B, makeWASocket } from './lib/baileys.js'
 import { loadCommands, handleMessage, getAllCommands, getPrefix, clearMeta } from './lib/router.js'
@@ -13,13 +14,53 @@ const BOT_NUMBER = String(process.env.BOT_NUMBER || '').replace(/\D/g, '')
 const PORT = process.env.PORT || 3000
 const logger = pino({ level: 'silent' })
 
-// Tiny web server so Render sees the service as alive
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify({ status: 'ok', bot: BOT_NAME, uptime: Math.floor(process.uptime()) }))
-}).listen(PORT, () => console.log(`🌐 Server on port ${PORT}`))
-
+let currentSock = null
 let pairRequested = false
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(body))
+}
+
+// Web server: health check for Render + the pairing page
+http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://localhost')
+
+  if (url.pathname === '/pair' || url.pathname === '/pair.html') {
+    const number = (url.searchParams.get('number') || '').replace(/\D/g, '')
+
+    // No number: show the pairing page
+    if (!url.searchParams.has('number')) {
+      try {
+        const html = fs.readFileSync(new URL('./pair.html', import.meta.url))
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        return res.end(html)
+      } catch {
+        return sendJson(res, 500, { error: 'pair.html not found next to index.js' })
+      }
+    }
+
+    // Number given: make a pairing code
+    if (number.length < 8 || number.length > 15) {
+      return sendJson(res, 400, { error: 'Enter your full number with country code, digits only.' })
+    }
+    if (!currentSock) {
+      return sendJson(res, 503, { error: 'The bot is still starting. Try again in a few seconds.' })
+    }
+    if (currentSock.authState.creds.registered) {
+      return sendJson(res, 409, { error: 'This bot is already linked to a WhatsApp account.' })
+    }
+    try {
+      const code = await currentSock.requestPairingCode(number)
+      return sendJson(res, 200, { code })
+    } catch (e) {
+      console.log('❌ Pair code failed:', e.message)
+      return sendJson(res, 500, { error: 'Could not create a code. Wait a few seconds and try again.' })
+    }
+  }
+
+  sendJson(res, 200, { status: 'ok', bot: BOT_NAME, uptime: Math.floor(process.uptime()) })
+}).listen(PORT, () => console.log(`🌐 Server on port ${PORT}`))
 
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState('./session')
@@ -28,19 +69,23 @@ async function start() {
     version, auth: state, logger, browser: Browsers.ubuntu('Chrome'),
     printQRInTerminal: false, syncFullHistory: false, markOnlineOnConnect: false
   })
+  currentSock = sock
 
   sock.ev.on('creds.update', async () => { await saveCreds(); scheduleUpload() })
 
-  // First run: print a pair code in the logs
+  // First run: pair with BOT_NUMBER in the logs, or wait for the /pair page
   if (!sock.authState.creds.registered && !pairRequested) {
-    if (!BOT_NUMBER) { console.log('❌ Set BOT_NUMBER (digits only, with country code)'); process.exit(1) }
-    pairRequested = true
-    setTimeout(async () => {
-      try {
-        const code = await sock.requestPairingCode(BOT_NUMBER)
-        console.log(`\n🔑 PAIR CODE: ${code}\nWhatsApp > Linked devices > Link with phone number\n`)
-      } catch (e) { console.log('❌ Pair code failed:', e.message); pairRequested = false }
-    }, 3000)
+    if (!BOT_NUMBER) {
+      console.log('ℹ️ No BOT_NUMBER set. Open /pair on your site to link WhatsApp.')
+    } else {
+      pairRequested = true
+      setTimeout(async () => {
+        try {
+          const code = await sock.requestPairingCode(BOT_NUMBER)
+          console.log(`\n🔑 PAIR CODE: ${code}\nWhatsApp > Linked devices > Link with phone number\n`)
+        } catch (e) { console.log('❌ Pair code failed:', e.message); pairRequested = false }
+      }, 3000)
+    }
   }
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
