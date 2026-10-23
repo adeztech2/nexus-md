@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0e1a">
+<title>ADEZ NEXUS PAIR HUB</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --card: rgba(255,255,255,0.06);
+    --card-line: rgba(255,255,255,0.12);
+    --text: #f2f5fb;
+    --muted: #9aa5bd;
+    --accent: #25d366;
+    --accent-2: #7c5cff;
+    --error: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Sora", system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+    display: grid;
+    place-items: center;
+    padding: 1.25rem;
+    position: relative;
+    overflow-x: hidden;
+  }
+  body::before, body::after {
+    content: "";
+    position: fixed;
+    width: 28rem; height: 28rem;
+    border-radius: 50%;
+    filter: blur(90px);
+    opacity: 0.35;
+    z-index: 0;
+    pointer-events: none;
+  }
+  body::before { background: var(--accent-2); top: -10rem; left: -8rem; }
+  body::after { background: var(--accent); bottom: -12rem; right: -8rem; opacity: 0.22; }
+
+  .card {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 26rem;
+    padding: 1.75rem 1.5rem;
+    background: var(--card);
+    border: 1px solid var(--card-line);
+    border-radius: 1.5rem;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  }
+  .status {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.78rem; color: var(--muted);
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--card-line);
+    border-radius: 999px;
+    margin-bottom: 1.25rem;
+  }
+  .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: #6b7488; }
+  .status.ok .dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(37,211,102,0.2); }
+  .status.bad .dot { background: var(--error); }
+
+  .brand { display: flex; align-items: center; gap: 0.85rem; margin: 0 0 1.25rem; }
+  .brand-icon {
+    flex: none; width: 3rem; height: 3rem;
+    display: grid; place-items: center;
+    color: #06210f;
+    background: linear-gradient(135deg, #25d366, #5be38f);
+    border-radius: 0.9rem;
+    box-shadow: 0 8px 24px rgba(37,211,102,0.3);
+  }
+  .brand-icon svg { width: 1.6rem; height: 1.6rem; }
+  h1 { font-size: 1.3rem; line-height: 1.15; letter-spacing: 0.02em; font-weight: 700; margin: 0; }
+  h2 { font-size: 1.75rem; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 0.5rem; }
+  .lead { color: var(--muted); font-size: 0.93rem; margin: 0 0 1.5rem; }
+
+  label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.45rem; }
+  .field {
+    display: flex; align-items: center;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--card-line);
+    border-radius: 0.9rem;
+    padding: 0 1rem;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(37,211,102,0.15); }
+  .field span { color: var(--muted); font-size: 1.05rem; margin-right: 0.4rem; }
+  input {
+    flex: 1; min-width: 0;
+    background: none; border: 0; outline: 0;
+    color: var(--text);
+    font: inherit; font-size: 1.05rem; letter-spacing: 0.02em;
+    padding: 0.95rem 0;
+  }
+  input::placeholder { color: #5d6780; }
+  .hint { font-size: 0.78rem; color: var(--muted); margin: 0.5rem 0 0; }
+  .error { color: var(--error); font-size: 0.88rem; margin: 0.9rem 0 0; }
+
+  .btn {
+    width: 100%;
+    margin-top: 1.25rem;
+    padding: 0.95rem 1rem;
+    font: inherit; font-weight: 700; font-size: 0.98rem;
+    color: #06210f;
+    background: linear-gradient(135deg, #25d366, #5be38f);
+    border: 0; border-radius: 0.9rem;
+    cursor: pointer;
+    transition: transform 0.12s, filter 0.12s;
+  }
+  .btn:hover { filter: brightness(1.06); }
+  .btn:active { transform: scale(0.985); }
+  .btn:disabled { opacity: 0.65; cursor: wait; }
+  .btn.ghost {
+    background: transparent; color: var(--text);
+    border: 1px solid var(--card-line);
+    margin-top: 1rem; padding: 0.75rem 1rem; font-weight: 600;
+  }
+  input:focus-visible, .btn:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
+
+  #result[hidden], .error[hidden] { display: none; }
+  #result { margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px solid var(--card-line); }
+  .result-title { font-size: 0.85rem; color: var(--muted); margin: 0 0 0.8rem; }
+  .code { display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
+  .group { display: flex; gap: 0.3rem; flex: 1; }
+  .tile {
+    flex: 1; min-width: 0;
+    aspect-ratio: 3 / 4;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: clamp(1.15rem, 6vw, 1.6rem);
+    background: linear-gradient(160deg, rgba(124,92,255,0.35), rgba(124,92,255,0.12));
+    border: 1px solid rgba(124,92,255,0.5);
+    border-radius: 0.7rem;
+    animation: pop 0.45s cubic-bezier(.2,.9,.3,1.3) backwards;
+  }
+  @keyframes pop { from { transform: translateY(8px) scale(0.8); opacity: 0; } to { transform: none; opacity: 1; } }
+  .dash { width: 0.55rem; height: 2px; background: var(--muted); flex: none; }
+
+  ol { margin: 1.4rem 0 0; padding: 0; list-style: none; counter-reset: s; }
+  ol li {
+    counter-increment: s;
+    position: relative;
+    padding-left: 2rem;
+    margin-bottom: 0.7rem;
+    font-size: 0.86rem; color: var(--muted);
+  }
+  ol li::before {
+    content: counter(s);
+    position: absolute; left: 0; top: 0.05rem;
+    width: 1.35rem; height: 1.35rem;
+    display: grid; place-items: center;
+    font-size: 0.72rem; font-weight: 700;
+    color: var(--text);
+    background: rgba(255,255,255,0.1);
+    border-radius: 50%;
+  }
+  ol strong { color: var(--text); font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tile { animation: none; }
+    .btn { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="status" id="status"><span class="dot"></span><span id="statusText">Checking bot…</span></div>
+  <div class="brand">
+    <div class="brand-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 6 2 12 8 18"/><polyline points="16 6 22 12 16 18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
+    </div>
+    <h1>ADEZ NEXUS PAIR HUB</h1>
+  </div>
+  <h2>Link your WhatsApp</h2>
+  <p class="lead">Get an 8-character code and enter it in WhatsApp. No QR scan needed.</p>
+
+  <form id="form" novalidate>
+    <label for="number">WhatsApp number</label>
+    <div class="field">
+      <span>+</span>
+      <input id="number" type="tel" inputmode="numeric" autocomplete="tel" placeholder="2348012345678" required>
+    </div>
+    <p class="hint">Include your country code. Digits only.</p>
+    <p id="error" class="error" role="alert" hidden></p>
+    <button id="submit" class="btn" type="submit">Get pairing code</button>
+  </form>
+
+  <section id="result" hidden aria-live="polite">
+    <p class="result-title">Your pairing code</p>
+    <div class="code" id="code" aria-label="Pairing code"></div>
+    <button type="button" id="copy" class="btn ghost">Copy code</button>
+    <ol>
+      <li>Open WhatsApp, then go to <strong>Settings → Linked devices</strong>.</li>
+      <li>Tap <strong>Link a device</strong>, then <strong>Link with phone number instead</strong>.</li>
+      <li>Enter the code. Use it right away, since it expires quickly.</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+  // Calls GET <PAIR_ENDPOINT>?number=<digits> and expects JSON: { code } or { error }
+  const PAIR_ENDPOINT = "/pair";
+
+  const $ = (id) => document.getElementById(id);
+  const form = $("form"), input = $("number"), submit = $("submit");
+  const errorEl = $("error"), result = $("result"), codeEl = $("code"), copyBtn = $("copy");
+  let currentCode = "";
+
+  // Bot status pill
+  fetch("/").then((r) => r.json()).then((d) => {
+    $("status").classList.add("ok");
+    $("statusText").textContent = (d.bot || "Bot") + " is online";
+  }).catch(() => {
+    $("status").classList.add("bad");
+    $("statusText").textContent = "Bot unreachable";
+  });
+
+  function showError(msg) { errorEl.textContent = msg; errorEl.hidden = !msg; }
+
+  function renderCode(raw) {
+    currentCode = raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    codeEl.innerHTML = "";
+    [currentCode.slice(0, 4), currentCode.slice(4)].forEach((chars, gi) => {
+      const g = document.createElement("div");
+      g.className = "group";
+      [...chars].forEach((ch, i) => {
+        const t = document.createElement("div");
+        t.className = "tile";
+        t.style.animationDelay = (gi * 4 + i) * 55 + "ms";
+        t.textContent = ch;
+        g.appendChild(t);
+      });
+      codeEl.appendChild(g);
+      if (gi === 0) { const d = document.createElement("div"); d.className = "dash"; codeEl.appendChild(d); }
+    });
+    copyBtn.textContent = "Copy code";
+    result.hidden = false;
+    result.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    showError("");
+    result.hidden = true;
+    const number = input.value.replace(/\D/g, "");
+    if (number.length < 8 || number.length > 15) {
+      showError("Enter your full number with country code, digits only.");
+      input.focus();
+      return;
+    }
+    submit.disabled = true;
+    submit.textContent = "Getting code…";
+    try {
+      const res = await fetch(PAIR_ENDPOINT + "?number=" + encodeURIComponent(number));
+      let data = {};
+      try { data = await res.json(); } catch (_) {}
+      if (!res.ok) throw new Error(data.error || data.message || "The server could not create a code. Try again in a moment.");
+      const code = data.code || data.pairingCode;
+      if (!code) throw new Error(data.error || data.message || "No code came back. Check that the bot is running.");
+      renderCode(String(code));
+    } catch (err) {
+      showError(err.message || "Could not reach the server. Check your connection and try again.");
+    } finally {
+      submit.disabled = false;
+      submit.textContent = "Get pairing code";
+    }
+  });
+
+  copyBtn.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(currentCode); copyBtn.textContent = "Copied"; }
+    catch (_) { copyBtn.textContent = "Press and hold the code to copy"; }
+  });
+</script>
+</body>
+</html>
