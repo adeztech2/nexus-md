@@ -1,0 +1,22 @@
+{
+  "name": "NEXUS MD",
+  "description": "NEXUS MD WhatsApp bot by Arnold Adez",
+  "keywords": ["whatsapp", "bot", "baileys"],
+  "stack": "heroku-24",
+  "buildpacks": [{ "url": "heroku/nodejs" }],
+  "formation": { "web": { "quantity": 1, "size": "basic" } },
+  "env": {
+    "BOT_NAME": { "description": "Bot name", "value": "NEXUS MD" },
+    "BOT_NUMBER": { "description": "WhatsApp number the bot links to (country code, digits only). The pair code appears in the app logs.", "required": true },
+    "OWNER_NUMBER": { "description": "Your number for owner commands (digits only, comma separated for more).", "required": true },
+    "PREFIX": { "description": "Command prefix", "value": "." },
+    "SUPABASE_URL": { "description": "Supabase project URL (keeps the WhatsApp login between restarts)", "required": true },
+    "SUPABASE_KEY": { "description": "Supabase key", "required": true },
+    "TIMEZONE": { "description": "Timezone for timestamps", "value": "Africa/Nairobi" },
+    "APP_URL": { "description": "Your app URL, e.g. https://your-app.herokuapp.com (stops it sleeping)", "required": false },
+    "GROQ_API_KEY": { "description": "Free AI key from groq.com (optional)", "required": false },
+    "ANTHROPIC_API_KEY": { "description": "Claude key for AI + image commands (optional)", "required": false },
+    "COBALT_API_URL": { "description": "Your cobalt server URL for Facebook/Instagram/Twitter/YouTube downloads (optional)", "required": false },
+    "COBALT_API_KEY": { "description": "cobalt key, only if your server needs one (optional)", "required": false }
+  }
+}
