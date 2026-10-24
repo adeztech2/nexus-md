@@ -6,7 +6,7 @@ import pino from 'pino'
 import { B, makeWASocket } from './lib/baileys.js'
 import { loadCommands, handleMessage, getAllCommands, getPrefix, clearMeta } from './lib/router.js'
 import { getGroup } from './lib/db.js'
-import { restore, upload, scheduleUpload, clearCloud } from './lib/session.js'
+import { createSession } from './lib/session.js'
 import { sleep, num } from './lib/utils.js'
 import { nexusConnected } from './lib/nexusStyle.js'
 import { settings } from './lib/botSettings.js'
@@ -26,18 +26,27 @@ for (const fn of ['log', 'info', 'warn', 'error']) {
 
 const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = B
 const BOT_NAME = process.env.BOT_NAME || 'NEXUS MD'
-const BOT_NUMBER = String(process.env.BOT_NUMBER || '').replace(/\D/g, '')
 const PORT = process.env.PORT || 3000
 const logger = pino({ level: 'silent' })
 
-let currentSock = null
-let pairRequested = false
-let replaced = false   // true when another copy took over this login
-let joinedOnce = false // auto-join/follow runs once per start
+// Numbers this deployment runs: comma-separated, digits only, with country code
+const NUMBERS = String(process.env.BOT_NUMBERS || process.env.BOT_NUMBER || '')
+  .split(',').map((n) => n.replace(/\D/g, '')).filter(Boolean)
+if (!NUMBERS.length) console.log('ℹ️ No BOT_NUMBERS set. Add BOT_NUMBERS=number1,number2 to run bots.')
 
-// Always-online: keep showing as available while the setting is on
+const bots = new Map() // number -> state for that connection
+
+function makeBot(number) {
+  // A single-number deployment keeps SESSION_ID, so an existing bot keeps its login
+  const id = NUMBERS.length === 1 && process.env.SESSION_ID ? process.env.SESSION_ID : `nexus_${number}`
+  return { number, session: createSession(id), sock: null, pairRequested: false, replaced: false, joinedOnce: false }
+}
+for (const n of NUMBERS) bots.set(n, makeBot(n))
+
+// Always-online: keep every connection showing as available while the setting is on
 setInterval(() => {
-  if (settings.alwaysonline && currentSock?.user) currentSock.sendPresenceUpdate('available').catch(() => {})
+  if (!settings.alwaysonline) return
+  for (const bot of bots.values()) if (bot.sock?.user) bot.sock.sendPresenceUpdate('available').catch(() => {})
 }, 60000)
 
 function sendJson(res, status, body) {
@@ -45,7 +54,7 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
-// Web server: health check for Render + the pairing page
+// Web server: health check for Render/Heroku + the pairing page
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost')
 
@@ -55,7 +64,6 @@ http.createServer(async (req, res) => {
     // No number: show the pairing page
     if (!url.searchParams.has('number')) {
       try {
-        // Look for pair.html in the repo root or in the public folder
         const paths = ['./pair.html', './public/pair.html']
         let html = null
         for (const f of paths) {
@@ -69,79 +77,82 @@ http.createServer(async (req, res) => {
       }
     }
 
-    // Number given: make a pairing code
     if (number.length < 8 || number.length > 15) {
       return sendJson(res, 400, { error: 'Enter your full number with country code, digits only.' })
     }
-    if (!currentSock) {
+    const bot = bots.get(number)
+    if (!bot) {
+      return sendJson(res, 404, { error: 'This number is not set up on this deployment. Add it to BOT_NUMBERS and redeploy.' })
+    }
+    if (!bot.sock) {
       return sendJson(res, 503, { error: 'The bot is still starting. Try again in a few seconds.' })
     }
-    if (currentSock.authState.creds.registered) {
-      return sendJson(res, 409, { error: 'This bot is already linked to a WhatsApp account.' })
+    if (bot.sock.authState.creds.registered) {
+      return sendJson(res, 409, { error: 'This number is already linked to a WhatsApp account.' })
     }
     try {
-      const code = await currentSock.requestPairingCode(number)
+      const code = await bot.sock.requestPairingCode(number)
       return sendJson(res, 200, { code })
     } catch (e) {
-      console.log('❌ Pair code failed:', e.message)
+      console.log(`[${number}] ❌ Pair code failed:`, e.message)
       return sendJson(res, 500, { error: 'Could not create a code. Wait a few seconds and try again.' })
     }
   }
 
-  sendJson(res, 200, { status: 'ok', bot: BOT_NAME, uptime: Math.floor(process.uptime()) })
+  sendJson(res, 200, { status: 'ok', bot: BOT_NAME, numbers: NUMBERS.length, uptime: Math.floor(process.uptime()) })
 }).listen(PORT, () => console.log(`🌐 Server on port ${PORT}`))
 
-async function start() {
-  const { state, saveCreds } = await useMultiFileAuthState('./session')
+async function start(bot) {
+  const { number, session } = bot
+  const { state, saveCreds } = await useMultiFileAuthState(session.dir)
   const { version } = await fetchLatestBaileysVersion()
   const sock = makeWASocket({
     version, auth: state, logger, browser: Browsers.ubuntu('Chrome'),
     printQRInTerminal: false, syncFullHistory: false, markOnlineOnConnect: false
   })
-  currentSock = sock
-  enableChannelForward(sock) // every message shows "Forwarded from <channel>"
+  bot.sock = sock
+  enableChannelForward(sock) // every message from this number shows "Forwarded from <channel>"
 
-  sock.ev.on('creds.update', async () => { await saveCreds(); scheduleUpload() })
+  sock.ev.on('creds.update', async () => { await saveCreds(); session.scheduleUpload() })
 
-  // First run: pair with BOT_NUMBER in the logs, or wait for the /pair page
-  if (!sock.authState.creds.registered && !pairRequested) {
-    if (!BOT_NUMBER) {
-      console.log('ℹ️ No BOT_NUMBER set. Open /pair on your site to link WhatsApp.')
-    } else {
-      pairRequested = true
-      setTimeout(async () => {
-        try {
-          const code = await sock.requestPairingCode(BOT_NUMBER)
-          console.log(`\n🔑 PAIR CODE: ${code}\nWhatsApp > Linked devices > Link with phone number\n`)
-        } catch (e) { console.log('❌ Pair code failed:', e.message); pairRequested = false }
-      }, 3000)
-    }
+  // Unlinked number: request a pairing code in the logs (the /pair page also works)
+  if (!sock.authState.creds.registered && !bot.pairRequested) {
+    bot.pairRequested = true
+    setTimeout(async () => {
+      try {
+        const code = await sock.requestPairingCode(number)
+        console.log(`[${number}] 🔑 PAIR CODE: ${code}\n  WhatsApp > Linked devices > Link with phone number\n`)
+      } catch (e) { console.log(`[${number}] ❌ Pair code failed:`, e.message); bot.pairRequested = false }
+    }, 3000)
   }
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'open') {
-      console.log(`✅ ${BOT_NAME} connected as ${num(sock.user.id)}`)
-      upload()
-      const me = num(sock.user.id) + '@s.whatsapp.net'
-      sock.sendMessage(me, { text: nexusConnected({ number: num(sock.user.id), prefix: getPrefix(), count: getAllCommands().length }) }).catch(() => {})
-      if (!joinedOnce) { joinedOnce = true; autoJoin(sock) } // join group + follow channel
+      const me = num(sock.user.id)
+      console.log(`✅ ${BOT_NAME} connected as ${me} [${session.id}]`)
+      session.upload()
+      sock.sendMessage(me + '@s.whatsapp.net', { text: nexusConnected({ number: me, prefix: getPrefix(), count: getAllCommands().length }) }).catch(() => {})
+      if (!bot.joinedOnce) { bot.joinedOnce = true; autoJoin(sock) } // join group + follow channel
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
-      console.log(`❌ Connection closed. Code: ${code}`)
+      console.log(`❌ [${number}] Connection closed. Code: ${code}`)
       if (code === DisconnectReason.loggedOut) {
-        console.log('🚪 Logged out. Saved session deleted. Redeploy to pair again.')
-        await clearCloud()
-        return process.exit(1)
+        // Clear only this number. The other bots keep running.
+        console.log(`🚪 [${number}] Logged out. Its saved session was deleted. Open /pair to link it again.`)
+        await session.clearCloud()
+        bot.pairRequested = false
+        await sleep(4000)
+        return start(bot).catch((e) => console.log(`❌ [${number}] restart failed:`, e.message))
       }
       if (code === DisconnectReason.connectionReplaced) {
-        // Do NOT exit: Render would restart this copy and it would kick the new one again.
-        replaced = true
-        console.log('🚨 Another copy took over this login. This copy is going idle.')
+        // Do NOT restart: this copy would kick the new one again.
+        bot.replaced = true
+        console.log(`🚨 [${number}] Another copy took over this login. This connection is going idle.`)
         return
       }
       await sleep(code === DisconnectReason.restartRequired ? 500 : 4000)
-      start().catch((e) => console.log('❌ restart failed:', e.message))
+      start(bot).catch((e) => console.log(`❌ [${number}] restart failed:`, e.message))
     }
   })
 
@@ -163,7 +174,7 @@ async function start() {
           else if (settings.autorecording) sock.sendPresenceUpdate('recording', chat).catch(() => {})
         }
         await handleMessage(sock, m)
-      } catch (e) { console.log('❌ handler error:', e.message) }
+      } catch (e) { console.log(`[${number}] ❌ handler error:`, e.message) }
     }
   })
 
@@ -175,7 +186,7 @@ async function start() {
       try {
         await sock.rejectCall(c.id, c.from)
         await sock.sendMessage(c.from, { text: settings.callmsg })
-      } catch (e) { console.log('❌ anticall error:', e.message) }
+      } catch (e) { console.log(`[${number}] ❌ anticall error:`, e.message) }
     }
   })
 
@@ -190,12 +201,20 @@ async function start() {
   })
 }
 
-await restore()
 await loadCommands()
-start().catch((e) => console.log('❌ start failed:', e))
+for (const bot of bots.values()) await bot.session.restore()
+for (const bot of bots.values()) {
+  start(bot).catch((e) => console.log(`[${bot.number}] ❌ start failed:`, e))
+  await sleep(2000) // stagger the connections
+}
 
-// A copy that was replaced must not upload its old credentials
-async function shutdown() { try { if (!replaced) await upload() } catch {} process.exit(0) }
+// A connection that was replaced must not upload its old credentials
+async function shutdown() {
+  for (const bot of bots.values()) {
+    try { if (!bot.replaced) await bot.session.upload() } catch {}
+  }
+  process.exit(0)
+}
 process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)
 process.on('unhandledRejection', (e) => console.log('Unhandled rejection:', e))
