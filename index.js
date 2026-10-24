@@ -8,6 +8,7 @@ import { getGroup } from './lib/db.js'
 import { restore, upload, scheduleUpload, clearCloud } from './lib/session.js'
 import { sleep, num } from './lib/utils.js'
 import { nexusConnected } from './lib/nexusStyle.js'
+import { settings } from './lib/botSettings.js'
 
 // Hide noisy encryption session dumps from the logs
 const origInfo = console.info
@@ -25,6 +26,11 @@ const logger = pino({ level: 'silent' })
 
 let currentSock = null
 let pairRequested = false
+
+// Always-online: keep showing as available while the setting is on
+setInterval(() => {
+  if (settings.alwaysonline && currentSock?.user) currentSock.sendPresenceUpdate('available').catch(() => {})
+}, 60000)
 
 function sendJson(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' })
@@ -130,7 +136,34 @@ async function start() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
     for (const m of messages) {
-      try { await handleMessage(sock, m) } catch (e) { console.log('❌ handler error:', e.message) }
+      try {
+        const chat = m.key.remoteJid
+        // Statuses: view them if enabled, never treat them as commands
+        if (chat === 'status@broadcast') {
+          if (settings.autoviewstatus) await sock.readMessages([m.key]).catch(() => {})
+          continue
+        }
+        // Private mode: only the bot account itself can use commands
+        if (settings.mode === 'private' && !m.key.fromMe) continue
+        if (!m.key.fromMe) {
+          if (settings.autoread) sock.readMessages([m.key]).catch(() => {})
+          if (settings.autotyping) sock.sendPresenceUpdate('composing', chat).catch(() => {})
+          else if (settings.autorecording) sock.sendPresenceUpdate('recording', chat).catch(() => {})
+        }
+        await handleMessage(sock, m)
+      } catch (e) { console.log('❌ handler error:', e.message) }
+    }
+  })
+
+  // Reject calls when anti-call is on
+  sock.ev.on('call', async (calls) => {
+    if (!settings.anticall) return
+    for (const c of calls) {
+      if (c.status !== 'offer') continue
+      try {
+        await sock.rejectCall(c.id, c.from)
+        await sock.sendMessage(c.from, { text: settings.callmsg })
+      } catch (e) { console.log('❌ anticall error:', e.message) }
     }
   })
 
@@ -154,4 +187,3 @@ process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)
 process.on('unhandledRejection', (e) => console.log('Unhandled rejection:', e))
 process.on('uncaughtException', (e) => { console.log('Uncaught exception:', e); process.exit(1) })
-           
