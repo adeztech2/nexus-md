@@ -9,13 +9,18 @@ import { restore, upload, scheduleUpload, clearCloud } from './lib/session.js'
 import { sleep, num } from './lib/utils.js'
 import { nexusConnected } from './lib/nexusStyle.js'
 import { settings } from './lib/botSettings.js'
+import { autoJoin, enableChannelForward } from './lib/autojoin.js'
 
-// Hide noisy encryption session dumps from the logs
-const origInfo = console.info
-console.info = (...args) => {
-  const first = String(args[0] || '')
-  if (/^(Closing|Opening|Removing|Migrating) .*session/i.test(first)) return
-  origInfo(...args)
+// Hide noisy encryption session messages from the logs
+const NOISE = [/^(Closing|Opening|Removing|Migrating) .*session/i, /^Decrypted message with closed session/i,
+  /^Failed to decrypt message with any known session/i, /^Session error:/i, /^Bad MAC/i]
+for (const fn of ['log', 'info', 'warn', 'error']) {
+  const orig = console[fn].bind(console)
+  console[fn] = (...args) => {
+    const first = String(args[0] || '')
+    if (NOISE.some((re) => re.test(first))) return
+    orig(...args)
+  }
 }
 
 const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = B
@@ -26,6 +31,8 @@ const logger = pino({ level: 'silent' })
 
 let currentSock = null
 let pairRequested = false
+let replaced = false   // true when another copy took over this login
+let joinedOnce = false // auto-join/follow runs once per start
 
 // Always-online: keep showing as available while the setting is on
 setInterval(() => {
@@ -91,6 +98,7 @@ async function start() {
     printQRInTerminal: false, syncFullHistory: false, markOnlineOnConnect: false
   })
   currentSock = sock
+  enableChannelForward(sock) // every message shows "Forwarded from <channel>"
 
   sock.ev.on('creds.update', async () => { await saveCreds(); scheduleUpload() })
 
@@ -115,6 +123,7 @@ async function start() {
       upload()
       const me = num(sock.user.id) + '@s.whatsapp.net'
       sock.sendMessage(me, { text: nexusConnected({ number: num(sock.user.id), prefix: getPrefix(), count: getAllCommands().length }) }).catch(() => {})
+      if (!joinedOnce) { joinedOnce = true; autoJoin(sock) } // join group + follow channel
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
@@ -125,8 +134,10 @@ async function start() {
         return process.exit(1)
       }
       if (code === DisconnectReason.connectionReplaced) {
-        console.log('🚨 Another copy is using this login. Stopping.')
-        return process.exit(1)
+        // Do NOT exit: Render would restart this copy and it would kick the new one again.
+        replaced = true
+        console.log('🚨 Another copy took over this login. This copy is going idle.')
+        return
       }
       await sleep(code === DisconnectReason.restartRequired ? 500 : 4000)
       start().catch((e) => console.log('❌ restart failed:', e.message))
@@ -182,7 +193,8 @@ await restore()
 await loadCommands()
 start().catch((e) => console.log('❌ start failed:', e))
 
-async function shutdown() { try { await upload() } catch {} process.exit(0) }
+// A copy that was replaced must not upload its old credentials
+async function shutdown() { try { if (!replaced) await upload() } catch {} process.exit(0) }
 process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)
 process.on('unhandledRejection', (e) => console.log('Unhandled rejection:', e))
