@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import http from 'http'
 import fs from 'fs'
+import './lib/keepalive.js'
 import pino from 'pino'
 import { B, makeWASocket } from './lib/baileys.js'
 import { loadCommands, handleMessage, getAllCommands, getPrefix, clearMeta } from './lib/router.js'
