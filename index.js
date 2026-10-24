@@ -7,6 +7,7 @@ import { B, makeWASocket } from './lib/baileys.js'
 import { loadCommands, handleMessage, getAllCommands, getPrefix, clearMeta } from './lib/router.js'
 import { getGroup } from './lib/db.js'
 import { createSession } from './lib/session.js'
+import { loadNumbers, saveNumbers } from './lib/numbers.js'
 import { sleep, num } from './lib/utils.js'
 import { nexusConnected } from './lib/nexusStyle.js'
 import { settings } from './lib/botSettings.js'
@@ -27,21 +28,44 @@ for (const fn of ['log', 'info', 'warn', 'error']) {
 const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = B
 const BOT_NAME = process.env.BOT_NAME || 'NEXUS MD'
 const PORT = process.env.PORT || 3000
+const PAIR_KEY = process.env.PAIR_KEY || ''
 const logger = pino({ level: 'silent' })
 
-// Numbers this deployment runs: comma-separated, digits only, with country code
-const NUMBERS = String(process.env.BOT_NUMBERS || process.env.BOT_NUMBER || '')
+// Numbers from the environment. More can be added from the /pair page.
+const ENV_NUMBERS = String(process.env.BOT_NUMBERS || process.env.BOT_NUMBER || '')
   .split(',').map((n) => n.replace(/\D/g, '')).filter(Boolean)
-if (!NUMBERS.length) console.log('ℹ️ No BOT_NUMBERS set. Add BOT_NUMBERS=number1,number2 to run bots.')
 
-const bots = new Map() // number -> state for that connection
+const bots = new Map()       // number -> state for that connection
+const knownNumbers = new Set() // every number that should run, saved to Supabase
 
 function makeBot(number) {
   // A single-number deployment keeps SESSION_ID, so an existing bot keeps its login
-  const id = NUMBERS.length === 1 && process.env.SESSION_ID ? process.env.SESSION_ID : `nexus_${number}`
-  return { number, session: createSession(id), sock: null, pairRequested: false, replaced: false, joinedOnce: false }
+  const useSessionId = process.env.SESSION_ID && ENV_NUMBERS.length === 1 && ENV_NUMBERS[0] === number
+  const id = useSessionId ? process.env.SESSION_ID : `nexus_${number}`
+  return { number, session: createSession(id), sock: null, starting: null, replaced: false, joinedOnce: false }
 }
-for (const n of NUMBERS) bots.set(n, makeBot(n))
+
+async function addBot(number) {
+  const bot = makeBot(number)
+  bots.set(number, bot)
+  if (!knownNumbers.has(number)) {
+    knownNumbers.add(number)
+    await saveNumbers([...knownNumbers])
+  }
+  return bot
+}
+
+// Restore the login (if any) and start the connection. Resolves once the socket exists.
+async function ensureRunning(bot) {
+  if (bot.sock) return
+  if (!bot.starting) {
+    bot.starting = (async () => {
+      await bot.session.restore()
+      await start(bot)
+    })().catch((e) => { bot.starting = null; throw e })
+  }
+  await bot.starting
+}
 
 // Always-online: keep every connection showing as available while the setting is on
 setInterval(() => {
@@ -80,13 +104,25 @@ http.createServer(async (req, res) => {
     if (number.length < 8 || number.length > 15) {
       return sendJson(res, 400, { error: 'Enter your full number with country code, digits only.' })
     }
-    const bot = bots.get(number)
-    if (!bot) {
-      return sendJson(res, 404, { error: 'This number is not set up on this deployment. Add it to BOT_NUMBERS and redeploy.' })
+    if (!PAIR_KEY) {
+      return sendJson(res, 403, { error: 'Pairing is turned off. Set PAIR_KEY on this deployment.' })
     }
-    if (!bot.sock) {
-      return sendJson(res, 503, { error: 'The bot is still starting. Try again in a few seconds.' })
+    if (url.searchParams.get('key') !== PAIR_KEY) {
+      return sendJson(res, 403, { error: 'Wrong access key.' })
     }
+
+    const existing = bots.get(number)
+    const fresh = !existing?.sock
+    const bot = existing || await addBot(number)
+
+    try {
+      await ensureRunning(bot)
+    } catch (e) {
+      console.log(`[${number}] ❌ start failed:`, e.message)
+      return sendJson(res, 503, { error: 'Could not start this number. Try again in a few seconds.' })
+    }
+    if (fresh) await sleep(3000) // give a new socket a moment before asking for a code
+
     if (bot.sock.authState.creds.registered) {
       return sendJson(res, 409, { error: 'This number is already linked to a WhatsApp account.' })
     }
@@ -99,7 +135,7 @@ http.createServer(async (req, res) => {
     }
   }
 
-  sendJson(res, 200, { status: 'ok', bot: BOT_NAME, numbers: NUMBERS.length, uptime: Math.floor(process.uptime()) })
+  sendJson(res, 200, { status: 'ok', bot: BOT_NAME, numbers: bots.size, uptime: Math.floor(process.uptime()) })
 }).listen(PORT, () => console.log(`🌐 Server on port ${PORT}`))
 
 async function start(bot) {
@@ -115,17 +151,6 @@ async function start(bot) {
 
   sock.ev.on('creds.update', async () => { await saveCreds(); session.scheduleUpload() })
 
-  // Unlinked number: request a pairing code in the logs (the /pair page also works)
-  if (!sock.authState.creds.registered && !bot.pairRequested) {
-    bot.pairRequested = true
-    setTimeout(async () => {
-      try {
-        const code = await sock.requestPairingCode(number)
-        console.log(`[${number}] 🔑 PAIR CODE: ${code}\n  WhatsApp > Linked devices > Link with phone number\n`)
-      } catch (e) { console.log(`[${number}] ❌ Pair code failed:`, e.message); bot.pairRequested = false }
-    }, 3000)
-  }
-
   sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'open') {
       const me = num(sock.user.id)
@@ -138,10 +163,9 @@ async function start(bot) {
       const code = lastDisconnect?.error?.output?.statusCode
       console.log(`❌ [${number}] Connection closed. Code: ${code}`)
       if (code === DisconnectReason.loggedOut) {
-        // Clear only this number. The other bots keep running.
+        // Clear only this number. Its login is gone, so it waits for a new pairing on /pair.
         console.log(`🚪 [${number}] Logged out. Its saved session was deleted. Open /pair to link it again.`)
         await session.clearCloud()
-        bot.pairRequested = false
         await sleep(4000)
         return start(bot).catch((e) => console.log(`❌ [${number}] restart failed:`, e.message))
       }
@@ -201,10 +225,14 @@ async function start(bot) {
   })
 }
 
+// Startup: load commands, then start every saved and configured number
 await loadCommands()
-for (const bot of bots.values()) await bot.session.restore()
+const stored = await loadNumbers()
+for (const n of [...ENV_NUMBERS, ...stored]) knownNumbers.add(n)
+await saveNumbers([...knownNumbers])
+for (const n of knownNumbers) bots.set(n, makeBot(n))
 for (const bot of bots.values()) {
-  start(bot).catch((e) => console.log(`[${bot.number}] ❌ start failed:`, e))
+  ensureRunning(bot).catch((e) => console.log(`[${bot.number}] ❌ start failed:`, e.message))
   await sleep(2000) // stagger the connections
 }
 
