@@ -192,6 +192,12 @@
       <input id="number" type="tel" inputmode="numeric" autocomplete="tel" placeholder="2348012345678" required>
     </div>
     <p class="hint">Include your country code. Digits only.</p>
+
+    <label for="key" style="margin-top:1rem">Access key</label>
+    <div class="field">
+      <input id="key" type="password" autocomplete="off" placeholder="Enter access key" required>
+    </div>
+
     <p id="error" class="error" role="alert" hidden></p>
     <button id="submit" class="btn" type="submit">Get pairing code</button>
   </form>
@@ -209,15 +215,13 @@
 </main>
 
 <script>
-  // Calls GET <PAIR_ENDPOINT>?number=<digits> and expects JSON: { code } or { error }
   const PAIR_ENDPOINT = "/pair";
 
   const $ = (id) => document.getElementById(id);
-  const form = $("form"), input = $("number"), submit = $("submit");
+  const form = $("form"), input = $("number"), keyInput = $("key"), submit = $("submit");
   const errorEl = $("error"), result = $("result"), codeEl = $("code"), copyBtn = $("copy");
   let currentCode = "";
 
-  // Bot status pill
   fetch("/").then((r) => r.json()).then((d) => {
     $("status").classList.add("ok");
     $("statusText").textContent = (d.bot || "Bot") + " is online";
@@ -254,20 +258,27 @@
     showError("");
     result.hidden = true;
     const number = input.value.replace(/\D/g, "");
+    const key = keyInput.value.trim();
     if (number.length < 8 || number.length > 15) {
       showError("Enter your full number with country code, digits only.");
       input.focus();
       return;
     }
+    if (!key) {
+      showError("Enter the access key.");
+      keyInput.focus();
+      return;
+    }
     submit.disabled = true;
     submit.textContent = "Getting code…";
     try {
-      const res = await fetch(PAIR_ENDPOINT + "?number=" + encodeURIComponent(number));
+      const url = PAIR_ENDPOINT + "?number=" + encodeURIComponent(number) + "&key=" + encodeURIComponent(key);
+      const res = await fetch(url);
       let data = {};
       try { data = await res.json(); } catch (_) {}
-      if (!res.ok) throw new Error(data.error || data.message || "The server could not create a code. Try again in a moment.");
+      if (!res.ok) throw new Error(data.error || "The server could not create a code. Try again in a moment.");
       const code = data.code || data.pairingCode;
-      if (!code) throw new Error(data.error || data.message || "No code came back. Check that the bot is running.");
+      if (!code) throw new Error("No code came back. Check that the bot is running.");
       renderCode(String(code));
     } catch (err) {
       showError(err.message || "Could not reach the server. Check your connection and try again.");
