@@ -1,14 +1,14 @@
 FROM node:20-slim
 
-# git is needed because npm fetches some dependencies directly from GitHub
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV npm_config_fetch_timeout=600000
+ENV npm_config_fetch_retries=5
 
-# Install dependencies first (cached unless package.json changes)
 COPY package*.json ./
 RUN npm install --omit=dev
 
