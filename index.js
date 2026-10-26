@@ -4,12 +4,11 @@ import fs from 'fs'
 import './lib/keepalive.js'
 import pino from 'pino'
 import { B, makeWASocket } from './lib/baileys.js'
-import { loadCommands, handleMessage, getAllCommands, getPrefix, clearMeta } from './lib/router.js'
+import { loadCommands, handleMessage, clearMeta } from './lib/router.js'
 import { getGroup } from './lib/db.js'
 import { createSession } from './lib/session.js'
 import { loadNumbers, saveNumbers } from './lib/numbers.js'
 import { sleep, num } from './lib/utils.js'
-import { nexusConnected } from './lib/nexusStyle.js'
 import { settings } from './lib/botSettings.js'
 import { autoJoin, enableChannelForward } from './lib/autojoin.js'
 
@@ -28,14 +27,13 @@ for (const fn of ['log', 'info', 'warn', 'error']) {
 const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = B
 const BOT_NAME = process.env.BOT_NAME || 'NEXUS MD'
 const PORT = process.env.PORT || 3000
-const PAIR_KEY = process.env.PAIR_KEY || ''
 const logger = pino({ level: 'silent' })
 
 // Numbers from the environment. More can be added from the /pair page.
 const ENV_NUMBERS = String(process.env.BOT_NUMBERS || process.env.BOT_NUMBER || '')
   .split(',').map((n) => n.replace(/\D/g, '')).filter(Boolean)
 
-const bots = new Map()       // number -> state for that connection
+const bots = new Map()         // number -> state for that connection
 const knownNumbers = new Set() // every number that should run, saved to Supabase
 
 function makeBot(number) {
@@ -104,12 +102,6 @@ http.createServer(async (req, res) => {
     if (number.length < 8 || number.length > 15) {
       return sendJson(res, 400, { error: 'Enter your full number with country code, digits only.' })
     }
-    if (!PAIR_KEY) {
-      return sendJson(res, 403, { error: 'Pairing is turned off. Set PAIR_KEY on this deployment.' })
-    }
-    if (url.searchParams.get('key') !== PAIR_KEY) {
-      return sendJson(res, 403, { error: 'Wrong access key.' })
-    }
 
     const existing = bots.get(number)
     const fresh = !existing?.sock
@@ -149,14 +141,17 @@ async function start(bot) {
   bot.sock = sock
   enableChannelForward(sock) // every message from this number shows "Forwarded from <channel>"
 
-  sock.ev.on('creds.update', async () => { await saveCreds(); session.scheduleUpload() })
+  sock.ev.on('creds.update', async () => {
+    if (bot.replaced) return // an idle copy must not overwrite the live login
+    await saveCreds()
+    session.scheduleUpload()
+  })
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'open') {
       const me = num(sock.user.id)
       console.log(`✅ ${BOT_NAME} connected as ${me} [${session.id}]`)
       session.upload()
-      sock.sendMessage(me + '@s.whatsapp.net', { text: nexusConnected({ number: me, prefix: getPrefix(), count: getAllCommands().length }) }).catch(() => {})
       if (!bot.joinedOnce) { bot.joinedOnce = true; autoJoin(sock) } // join group + follow channel
     }
     if (connection === 'close') {
