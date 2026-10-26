@@ -4,7 +4,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # Install dependencies first (cached unless package.json changes)
-COPY package*.json .npmrc ./
+COPY package*.json ./
 RUN npm install --omit=dev
 
 COPY . .
